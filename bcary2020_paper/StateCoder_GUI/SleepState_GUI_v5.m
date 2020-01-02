@@ -1,4 +1,4 @@
-function Sleep_state_coder_v4_SLEEPRIG
+function SleepState_GUI_v5
 
 screen_size = get(0,'ScreenSize');
 s_wid = screen_size(3);
