@@ -64,8 +64,8 @@ function send_msg(recipients, subject, message, carrier)
 
     % =========================================================
     % YOU NEED TO TYPE IN YOUR OWN EMAIL AND PASSWORDS:
-    mail = 'bcaryspam2@gmail.com';  %Your GMail email address
-    pwd  = 'Lov3isall!';            %Your GMail password
+    mail = '#######gmail.com';  %Your GMail email address
+    pwd  = '#######';            %Your GMail password
     % =========================================================
     
     % Find the recipients that are entered as numbers
