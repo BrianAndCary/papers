@@ -14,16 +14,28 @@ set(0,'DefaultLineLineWidth',2,...
 % path for folder containing raw data
 start_path = 'C:\Users\SleepRig-2\Desktop\Data\';
 
+% path to dependencies
+dep_path = 'C:\Users\SleepRig-2\Documents\git_projects\bcary2020_paper\common_dependencies';
+addpath(genpath(dep_path));
+
 % folder containing python functions used for random forest (RF) algorithm
-pywrap_dir = 'C:\Users\SleepRig-2\Documents\MATLAB\SleepState_Code\python_callers';
-addpath(genpath(pywrap_dir));
+hs.pywrap_dir = 'C:\Users\SleepRig-2\Documents\git_projects\bcary2020_paper\StateCoder_GUI\python_code';
+addpath(genpath(hs.pywrap_dir));
+
+% dir to save ML model info
+hs.ml_model_dir = 'C:\Users\SleepRig-2\Documents\git_projects\bcary2020_paper\StateCoder_GUI\TRAINED_MODELS';
 
 % folder containing python program
-python_path = 'C:\\Users\\SleepRig-2\\Anaconda2\\python';
-addpath(genpath(python_path));
+hs.python_path = 'C:\\Users\\SleepRig-2\\Anaconda2\\python';
+addpath(genpath(hs.python_path));
 
 % path used for temporary python RF files
-hs.ml_model_path='C:\Users\SleepRig-2\Documents\MATLAB\tempPyVidcodeFiles\';
+hs.ml_temp_path = 'C:\Users\SleepRig-2\Documents\git_projects\bcary2020_paper\tempPyVidcodeFiles\';
+
+if ~isfolder(hs.ml_temp_path)
+    disp(['Creating dir: ', hs.ml_temp_path])
+    mkdir(hs.ml_temp_path);
+end
 
 %%%%%%%%
 %Params%
@@ -46,6 +58,7 @@ hs.num_vidfiles_to_load = round(hs.viewer_mins/movt_data_length_min);
 hs.length_movt_toload = hs.viewer_mins*60*hs.fps;
 hs.video_beg_secs = [];
 
+hs.brain_state = [];
 hs.sleep_state_data = [];
 hs.window_sec = 10; % sec for each epoch used for classification
 hs.epoch_size = hs.viewer_mins*(60/hs.window_sec);
@@ -240,6 +253,7 @@ drawnow
 
 % load a finder window to pick a dir containing the raw EEG/EMG files with
 % video files in a subdir
+disp('Find Folder with Raw EEG Files...')
 [hs.dir_path] = uigetdir('Find Raw EEG Files...');
 hs.directory = dir(hs.dir_path);
 
@@ -440,6 +454,8 @@ hs.time = hs.time./60;
 analyze_and_plot % run analysis and plotting now that this view window's data is loaded
 end
 
+%%%
+
 % Load the previous window of data (epoch)
 function back_but(~,~)
 disp('back..')
@@ -490,6 +506,8 @@ end
 
 analyze_and_plot % run analysis and plotting now that this view window's data is loaded
 end
+
+%%%
 
 % core function that processes the loaded data and plots figures to GUI
 function analyze_and_plot(~,~)
@@ -666,7 +684,8 @@ ylabel(hs.theta_ax,'Theta/delta')
 
 
 % Prepare EMG values
-emg_data(isnan(emg_data)) = nanmean(emg_data);
+emg_data = hs.emg_data;
+emg_data(isnan(hs.emg_data)) = nanmean(hs.emg_data);
 emg_data = filtfilt(hs.emg_filt,emg_data);
 
 avg_int = round(hs.sample_rate*hs.state_sec);
@@ -884,7 +903,20 @@ if hs.have_analyzed(hs.epoch_num + 1) == 0
         hs.brain_state = remove_small_states(temp_bs); % remove states that are isolated or too small
     else
         % if ML mode isn't on apply tresh-based algorithm
-        Thresh_State_Algo(t,d_to_b_ratio,t_to_d_ratio,hs.emg_average,hs.move_average)
+        nrem_thresh = get(hs.dthresh_box,'String');
+        hs.nrem_thresh = str2double(nrem_thresh);
+        rem_thresh = get(hs.tthresh_box,'String');
+        hs.rem_thresh = str2double(rem_thresh);
+        emg_thresh = get(hs.emgthresh_box,'String');
+        hs.emg_thresh = str2double(emg_thresh);
+        movt_thresh = get(hs.movtthresh_box,'String');
+        hs.movt_thresh = str2double(movt_thresh);
+        
+        feats = [d_to_b_ratio, t_to_d_ratio, hs.emg_average', hs.move_average'];
+        labels = hs.brain_state;
+        thresholds = [hs.nrem_thresh, hs.rem_thresh, hs.emg_thresh, hs.movt_thresh];
+        [output_states] = Thresh_State_Algo(t,feats,labels,thresholds);
+        hs.brain_state = repelem(output_states,hs.upsamp_by);
     end
 else
     hs.brain_state = hs.sleep_state_data((hs.epoch_num*hs.epoch_size*hs.upsamp_by+1):...
@@ -963,6 +995,8 @@ hs.have_analyzed(hs.epoch_num + 1) = 1;
 drawnow
 
 end
+
+%%%
 
 % Function used apply hotkeys within GUI window
 function key_catcher(~,eventdata)
@@ -1117,13 +1151,14 @@ function trainML_but(~,~)
     
     % remove previously saved temp model variables 
     disp('Clearing temp dir...')
-    rmdir(hs.ml_model_path,'s')
-    mkdir(hs.ml_model_path)
+    rmdir(hs.ml_temp_path,'s')
+    mkdir(hs.ml_temp_path)
     
     % run the ML training by calling the matlab python wrapper
     train_data = [hs.ML_input_vars; hs.sleep_state_data(hs.num_prev_states*hs.upsamp_by+1:end)]';
     [hs.pyMdl_path,hs.OOBerr,hs.saveMdl_path] = ...
-        AutoVidCode_trainModel_PyWrap(train_data,hs.anim,hs.mlmode,hs.nTrees);
+        TrainModel_PyWrap(train_data,hs.anim,hs.mlmode,hs.nTrees,...
+        hs.python_path,hs.ml_model_dir,hs.pywrap_dir,hs.ml_temp_path);
     
     disp(['Train Acc. is: ',num2str(100*hs.OOBerr)])
     
@@ -1147,7 +1182,8 @@ function trainML_but(~,~)
     
     % train once more with SSD features
     [hs.pyMdl_path,hs.OOBerr,hs.saveMdl_path] = ...
-            AutoVidCode_trainModel_PyWrap(train_data,hs.anim_ssd,hs.mlmode,hs.nTrees);
+            TrainModel_PyWrap(train_data,hs.anim_ssd,hs.mlmode,hs.nTrees,...
+            hs.python_path,hs.ml_model_dir,hs.pywrap_dir,hs.ml_temp_path);
 
     disp(['Train Acc. is: ',num2str(100*hs.OOBerr)])
 end
@@ -1159,7 +1195,7 @@ function ML_classifier(feature_array,anim)
     
     % save to temp file
     homefolder = getenv('HOME');
-    tempdir = [homefolder filesep 'Documents' filesep 'MATLAB' filesep 'tempPyVidcodeFiles'];
+    tempdir = hs.ml_temp_path;
     if ~exist(tempdir, 'dir'), mkdir(tempdir); end
     tempfeat_code = 'temp_feature_input.mat';
     tempfeat = fullfile(tempdir,tempfeat_code);
@@ -1167,8 +1203,8 @@ function ML_classifier(feature_array,anim)
     save(tempfeat,'feature_array');
     
     % call to python script for scoring
-    ml_model_path = [hs.ml_model_path anim '_pyMdl.pkl'];
-    py_score_call = [python_path ' ' pywrap_dir filesep ...
+    ml_model_path = [hs.ml_temp_path anim '_pyMdl.pkl'];
+    py_score_call = [hs.python_path ' ' hs.pywrap_dir filesep ...
                 'auto_video_score_Python.py -f ' tempfeat ' -sd ' tempdir ' -mdl ' ml_model_path];
     py_score_status = system(py_score_call);
     output_code = 'pyOut.mat';
@@ -1330,216 +1366,6 @@ function display_video(start_sec, end_sec)
     speed_upby = 8;
     implay(uint8(full_frames),hs.fps*speed_upby);
     delete(hs.plotted_coords);
-end
-
-%%%
-function Thresh_State_Algo(state_times,d_ratio,t_ratio,emg_avg,move_avg)
-    
-t = state_times;
-d_to_b_ratio = d_ratio;
-t_to_d_ratio = t_ratio;
-move_average = move_avg;
-emg_average = emg_avg;
-
-%brain state classifier
-%1 = awake
-%2 = rem
-%3 = nrem
-
-nrem_thresh = get(hs.dthresh_box,'String');
-hs.nrem_thresh = str2double(nrem_thresh);
-rem_thresh = get(hs.tthresh_box,'String');
-hs.rem_thresh = str2double(rem_thresh);
-emg_thresh = get(hs.emgthresh_box,'String');
-hs.emg_thresh = str2double(emg_thresh);
-movt_thresh = get(hs.movtthresh_box,'String');
-hs.movt_thresh = str2double(movt_thresh);
-
-brain_state = hs.sleep_state_data;
-if hs.first_run == 1
-    
-    %first classification point
-    if (move_average(1) > hs.movt_thresh*1.2) || (emg_average(1) > hs.emg_thresh*1.2)
-         brain_state(1) = 1;
-    elseif t_to_d_ratio(1) > hs.rem_thresh*2
-        brain_state(1) = 2;
-    elseif d_to_b_ratio(1) > hs.nrem_thresh
-        brain_state(1) = 3;
-    else
-        brain_state(1) = 1;
-    end
-    
-    %second classification point
-    if (move_average(2) > hs.movt_thresh*1.2) || (emg_average(1) > hs.emg_thresh*1.2)
-         brain_state(2) = 1;
-    elseif t_to_d_ratio(2) > hs.rem_thresh*2
-        brain_state(2) = 2;
-    elseif d_to_b_ratio(2) > hs.nrem_thresh
-        brain_state(2) = 3;
-    else
-        brain_state(2) = 1;
-    end
-    
-    start_loop = 3;
-else
-    start_loop = 1;
-end
-
-
-%classification loop
-for min = start_loop:length(t)
-    one_back = brain_state(end);
-    two_back = brain_state(end-1);
-    if two_back == 1
-        if one_back == 1
-            if (move_average(min) > hs.movt_thresh*0.8) || (emg_average(1) > hs.emg_thresh*0.8)
-                brain_state(end+1) = 1;
-            elseif t_to_d_ratio(min) > hs.rem_thresh*3
-                brain_state(end+1) = 2;
-            elseif d_to_b_ratio(min) > hs.nrem_thresh*1.1
-                brain_state(end+1) = 3;
-            else
-                brain_state(end+1) = 1;
-            end
-        end 
-        
-        if one_back == 2
-            if (move_average(min) > hs.movt_thresh*1.1) || (emg_average(1) > hs.emg_thresh*1.1)
-                brain_state(end) = 1;
-                brain_state(end+1) = 1;
-            elseif t_to_d_ratio(min) > hs.rem_thresh
-                brain_state(end+1) = 2;
-            elseif d_to_b_ratio(min) > hs.nrem_thresh*1.1
-                try
-                if (move_average(min-1) > hs.movt_thresh*0.25) || (emg_average(1) > hs.emg_thresh*0.25)
-                    brain_state(end) = 1;
-                end                    
-                brain_state(end+1) = 3;
-                end
-            else
-                brain_state(end) = 1;
-                brain_state(end+1) = 1;
-            end
-        end         
-        
-        if one_back == 3
-            if (move_average(min) > hs.movt_thresh*1.2) || (emg_average(1) > hs.emg_thresh*1.2)
-                brain_state(end+1) = 1;
-            elseif t_to_d_ratio(min) > hs.rem_thresh*1.1
-                brain_state(end+1) = 2;
-            elseif d_to_b_ratio(min) > hs.nrem_thresh
-                brain_state(end+1) = 3;
-            else
-                brain_state(end+1) = 1;
-            end
-        end                 
-    end
-    
-    if two_back == 2
-        if one_back == 1
-            if (move_average(min) > hs.movt_thresh*1) || (emg_average(1) > hs.emg_thresh*1.2)
-                brain_state(end+1) = 1;
-            elseif t_to_d_ratio(min) > hs.rem_thresh*1
-                try
-                if (move_average(min-1) < hs.movt_thresh*0.9) || (emg_average(1) < hs.emg_thresh*1.2)
-                    brain_state(end) = 2;
-                end
-                brain_state(end+1) = 2;
-                end
-            elseif d_to_b_ratio(min) > hs.nrem_thresh*1            
-                brain_state(end+1) = 3;
-            else
-                brain_state(end+1) = 1;
-            end
-        end 
-        
-        if one_back == 2
-            if (move_average(min) > hs.movt_thresh*1.2) || (emg_average(1) > hs.emg_thresh*1.2)
-                brain_state(end+1) = 1;
-            elseif t_to_d_ratio(min) > hs.rem_thresh*0.85
-                brain_state(end+1) = 2;
-            elseif d_to_b_ratio(min) > hs.nrem_thresh*0.85
-                brain_state(end+1) = 3;
-            else
-                brain_state(end+1) = 1;
-            end
-        end         
-        
-        if one_back == 3
-            if (move_average(min) > hs.movt_thresh*1.1) || (emg_average(1) > hs.emg_thresh*1.1)
-                brain_state(end+1) = 1;
-            elseif t_to_d_ratio(min) > hs.rem_thresh*1.1
-                brain_state(end+1) = 2;
-            elseif d_to_b_ratio(min) > hs.nrem_thresh
-                brain_state(end+1) = 3;
-            else
-                brain_state(end+1) = 1;
-            end
-        end                 
-    end     
-        
-
-    if two_back == 3
-        if one_back == 1
-            if (move_average(min) > hs.movt_thresh*1) || (emg_average(1) > hs.emg_thresh*1)
-                brain_state(end+1) = 1;
-            elseif t_to_d_ratio(min) > hs.rem_thresh*1
-                rem_ratio = t_to_d_ratio(min-1)/hs.rem_thresh;
-                nrem_ratio = d_to_b_ratio(min-1)/hs.nrem_thresh;
-                
-                try
-                if (move_average(min-1) < hs.movt_thresh*0.9) || (emg_average(1) < hs.emg_thresh*0.9)
-                    if rem_ratio > nrem_ratio
-                        brain_state(end) = 2;
-                    else
-                        brain_state(end) = 3;
-                    end
-                end
-                catch
-                    if rem_ratio > nrem_ratio
-                        brain_state(end) = 2;
-                    else
-                        brain_state(end) = 3;
-                    end
-                end
-                brain_state(end+1) = 2;
-            elseif d_to_b_ratio(min) > hs.nrem_thresh*1
-                brain_state(end+1) = 3;
-            else
-                brain_state(end+1) = 1;
-            end
-        end 
-        
-        if one_back == 2
-            if (move_average(min) > hs.movt_thresh*1.2) || (emg_average(1) > hs.emg_thresh*1.2)
-                brain_state(end+1) = 1;
-            elseif t_to_d_ratio(min) > hs.rem_thresh*0.9
-                brain_state(end+1) = 2;
-            elseif d_to_b_ratio(min) > hs.nrem_thresh*0.85
-                brain_state(end+1) = 3;
-            else
-                brain_state(end+1) = 1;
-            end
-        end         
-        
-        if one_back == 3
-            if (move_average(min) > hs.movt_thresh*1.25) || (emg_average(1) > hs.emg_thresh*1.25)
-                brain_state(end+1) = 1;
-            elseif t_to_d_ratio(min) > hs.rem_thresh*1
-                brain_state(end+1) = 2;
-            elseif d_to_b_ratio(min) > hs.nrem_thresh*0.9
-                brain_state(end+1) = 3;
-            else
-                brain_state(end+1) = 1;
-            end
-        end                 
-    end
-    
-end
-    
-brain_state = brain_state(end-length(t)+1:end);
-hs.brain_state = repelem(brain_state,hs.upsamp_by);
-
 end
 
 %%%
